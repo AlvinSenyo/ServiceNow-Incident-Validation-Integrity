@@ -1,0 +1,114 @@
+================================================================================
+TECHNICAL MANUAL: INCIDENT VALIDATION & INTEGRITY (SERVICENOW v2026)
+================================================================================
+
+1. PHASE 1: SECURITY & PERSONA SETUP (RBAC)
+-------------------------------------------
+Objective: Create a specialized role and user to test field-level security.
+
+Step 1.1: Create the Custom Role
+- Navigate: [User Administration] > [Roles] > [New]
+- Label/Name: u_incident_validator
+- Click [Submit].
+
+Step 1.2: Create the Test User
+- Navigate: [User Administration] > [Users] > [New]
+- User ID: harlow.hardware
+- Roles (Related List): Click [Edit] and add: 'itil' AND 'u_incident_validator'.
+
+Step 1.3: Implement Access Control Lists (ACLs)
+- **CRITICAL**: Elevate your profile to 'security_admin' first.
+- Navigate: [System Security] > [Access Control (ACL)]
+- ACL A (Table Level): Type: record | Operation: write | Name: incident | .none
+  * Role: itil
+- ACL B (Wildcard Level): Type: record | Operation: write | Name: incident | *
+  * Role: itil
+- ACL C (Field Level): Type: record | Operation: write | Name: incident | cmdb_ci
+  * Role: u_incident_validator
+  * Purpose: Ensures only 'Validators' can edit the Configuration Item field.
+
+2. PHASE 2: UI POLICY 1 - HARDWARE CATEGORY LOGIC
+------------------------------------------------
+Objective: Make CI mandatory for Hardware and show visual alerts.
+
+Step 2.1: Create the Policy
+- Navigate: [System Definition] > [UI Policies] > [New]
+- Short Description: Hardware Category Requirements
+- Table: Incident [incident]
+- Conditions: [Category] [is] [Hardware]
+- Global: Checked | On Load: Checked | Reverse if false: Checked.
+
+Step 2.2: Create the Action
+- Scroll to [UI Policy Actions] related list > [New]
+- Field name: Configuration Item (cmdb_ci)
+- Mandatory: True | Visible: True
+- Click [Submit].
+
+Step 2.3: Implement the Advanced Scripts
+- Check the [Advanced] checkbox on the UI Policy form.
+- **Execute if True Tab**:
+    function onCondition() {
+        var ciField = 'cmdb_ci';
+        g_form.hideFieldMsg(ciField); // Prevent stacking
+        if (!g_form.getValue(ciField)) {
+            g_form.showFieldMsg(ciField, 'Hardware requires CI selection.', 'info');
+            setTimeout(function() {
+                g_form.flash(ciField, "#FFFACD", 3);
+            }, 150);
+        }
+    }
+- **Execute if False Tab**:
+    function onCondition() {
+        g_form.hideFieldMsg('cmdb_ci'); // Cleanup message when category changes
+    }
+
+3. PHASE 3: UI POLICY 2 - HIGH IMPACT LOGIC
+-------------------------------------------
+Objective: Ensure High Impact tickets are assigned to a group immediately.
+
+Step 3.1: Create the Policy
+- Navigate: [System Definition] > [UI Policies] > [New]
+- Short Description: Impact 1 Assignment Group
+- Conditions: [Impact] [is] [1 - High]
+- Reverse if false: Checked.
+
+Step 3.2: Create the Action
+- [UI Policy Actions] > [New]
+- Field name: Assignment group
+- Mandatory: True
+
+Step 3.3: Implement the Advanced Scripts
+- **Execute if True Tab**:
+    function onCondition() {
+        g_form.showFieldMsg('assignment_group', 'High Impact requires immediate routing.', 'info');
+    }
+- **Execute if False Tab**:
+    function onCondition() {
+        g_form.hideFieldMsg('assignment_group'); // Cleanup when Impact is lowered
+    }
+
+4. PHASE 4: CLIENT SCRIPT - DATABASE PROTECTION
+-----------------------------------------------
+Objective: Prevent the record from being saved to the database without a subcategory.
+
+Step 4.1: Create the Script
+- Navigate: [System Definition] > [Client Scripts] > [New]
+- Name: Restrict DB Save - Missing Subcategory
+- Table: Incident | Type: onSubmit
+- Script:
+    function onSubmit() {
+        var subcat = g_form.getValue('subcategory');
+        if (!subcat || subcat == '' || subcat == 'NULL') {
+            g_form.addErrorMessage('CRITICAL ERROR: Subcategory is required. Data NOT saved.');
+            g_form.flash('subcategory', '#FF0000', 3);
+            return false; // ABORTS THE SAVE
+        }
+    }
+
+5. VALIDATION STEPS (TESTING)
+-----------------------------
+1. Change Category to Hardware: Verify mandatory asterisk and Info Message.
+2. Change Category to Inquiry: Verify asterisk and Info Message disappear.
+3. Change Impact to 1: Verify Assignment Group becomes mandatory.
+4. Try to save with NO Subcategory: Verify Error Message and that record stays unsaved.
+================================================================================
